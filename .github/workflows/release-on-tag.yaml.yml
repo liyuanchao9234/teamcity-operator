@@ -1,12 +1,16 @@
-name: Release on tag
+name: Publish image and chart on tag
 
 on:
   push:
     tags:
       - '*.*.*'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure tag is semver
@@ -18,33 +22,61 @@ jobs:
           fi
           echo "Tag '$TAG' is valid semver."
 
+      - name: Compute release/chart versions
+        run: |
+          TAG="${{ github.ref_name }}"
+          CHART_VERSION="${TAG#v}"
+          echo "CHART_VERSION=$CHART_VERSION" >> "$GITHUB_ENV"
+          echo "IMAGE_REPOSITORY=ghcr.io/${{ github.repository_owner }}/teamcity-operator" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push operator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}:${{ env.CHART_VERSION }}
+            ${{ env.IMAGE_REPOSITORY }}:latest
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
           version: 'v3.14.0'
 
-      # Adapted from HelmPackage job in .teamcity.yml: build and package the Helm chart
-      - name: Build Helm chart artifact
-        env:
-          VERSION: ${{ github.ref_name }}
-          # Image reference for the chart (tag = release tag)
-          IMG: jetbrains/teamcity-operator:${{ github.ref_name }}
+      - name: Build and package Helm chart artifact
         run: |
-          make helm
+          sed -i "s#^\([[:space:]]*repository:[[:space:]]*\).*#\1${IMAGE_REPOSITORY}#" ./charts/teamcity-operator/values.yaml
+          sed -i "s#^\([[:space:]]*tag:[[:space:]]*\).*#\1${CHART_VERSION}#" ./charts/teamcity-operator/values.yaml
           helm dependency build ./charts/teamcity-operator
-          helm package ./charts/teamcity-operator --version "$VERSION"
+          helm lint ./charts/teamcity-operator
+          helm package ./charts/teamcity-operator --version "${CHART_VERSION}" --app-version "${CHART_VERSION}"
 
-      - name: Create release with notes and attach Helm package
+      - name: Verify chart package exists
+        run: |
+          ls -l "teamcity-operator-${CHART_VERSION}.tgz"
+
+      - name: Create release and attach Helm package
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          draft: true
+          draft: false
+          prerelease: false
           generate_release_notes: true
-          files: teamcity-operator-*.tgz
+          files: teamcity-operator-${{ env.CHART_VERSION }}.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
