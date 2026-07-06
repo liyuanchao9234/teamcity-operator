@@ -40,14 +40,14 @@ func CreateEmptyStatefulSet(name string, namespace string, labels map[string]str
 		},
 	}
 }
-func DefaultEnvironmentVariableBuilder(nodeName string, xmxValue string, dataDirPath string, extraServerOpts string) []v12.EnvVar {
+func DefaultEnvironmentVariableBuilder(nodeName string, serviceName string, xmxValue string, dataDirPath string, extraServerOpts string) []v12.EnvVar {
 	return []v12.EnvVar{
 		PodNameEnvVariableBuilder(),
 		PodNamespaceEnvVariableBuilder(),
 		DataDirPathEnvVar(dataDirPath),
 		LogDirPathEnvVar(dataDirPath),
 		ServerMemOptsEnvVar(xmxValue),
-		ServerOptsEnvVar(dataDirPath, nodeName, extraServerOpts),
+		ServerOptsEnvVar(dataDirPath, nodeName, serviceName, extraServerOpts),
 	}
 }
 
@@ -72,13 +72,18 @@ func ServerMemOptsEnvVar(xmxValue string) v12.EnvVar {
 	}
 }
 
-func ServerOptsEnvVar(dataDirPath string, nodeName string, extraServerOpts string) v12.EnvVar {
+func ServerOptsEnvVar(dataDirPath string, nodeName string, serviceName string, extraServerOpts string) v12.EnvVar {
+	rootURL := "http://$(POD_NAME).$(POD_NAMESPACE)"
+	if serviceName != "" {
+		rootURL = fmt.Sprintf("http://$(POD_NAME).%s.$(POD_NAMESPACE).svc", serviceName)
+	}
+
 	return v12.EnvVar{
 		Name: "TEAMCITY_SERVER_OPTS",
 		Value: "-XX:+HeapDumpOnOutOfMemoryError -XX:+DisableExplicitGC" +
 			fmt.Sprintf(" -XX:HeapDumpPath=%s%s%s", dataDirPath, "/memoryDumps/", nodeName) +
 			fmt.Sprintf(" -Dteamcity.server.nodeId=%s", nodeName) +
-			fmt.Sprintf(" -Dteamcity.server.rootURL=http://$(POD_NAME).$(POD_NAMESPACE)") +
+			fmt.Sprintf(" -Dteamcity.server.rootURL=%s", rootURL) +
 			extraServerOpts,
 	}
 }
@@ -254,9 +259,10 @@ func BuildEnvVariablesFromGlobalAndNodeSpecificSettings(instance *TeamCity, node
 	}
 	extraServerOpts = responsibilities + extraServerOpts
 	xmxValue := XmxValueCalculator(instance.Spec.XmxPercentage, node.Spec.Requests.Memory().Value())
-	envVars := DefaultEnvironmentVariableBuilder(node.Name, xmxValue, dataDirPath, extraServerOpts)
-	nodeSpecificEnvVars := ConvertNodeEnvVars(node.Spec.Env)
-	envVars = append(envVars, nodeSpecificEnvVars...)
+	envVars := DefaultEnvironmentVariableBuilder(node.Name, node.Spec.ServiceName, xmxValue, dataDirPath, extraServerOpts)
+	for _, key := range SortKeysAlphabeticallyInMap(node.Spec.Env) {
+		envVars = append(envVars, v12.EnvVar{Name: key, Value: node.Spec.Env[key]})
+	}
 	if instance.DatabaseSecretProvided() {
 		databaseEnvVars := DatabaseEnvVarBuilder(instance.Spec.DatabaseSecret.Secret)
 		envVars = append(envVars, databaseEnvVars...)

@@ -22,7 +22,8 @@ func BuildRoNode(instance *TeamCity, name string) Node {
 	return Node{
 		Name: name,
 		Spec: NodeSpec{
-			Requests: instance.Spec.MainNode.Spec.Requests,
+			Requests:    instance.Spec.MainNode.Spec.Requests,
+			ServiceName: instance.Spec.MainNode.Spec.ServiceName,
 		},
 	}
 }

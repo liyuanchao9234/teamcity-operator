@@ -440,6 +440,28 @@ var _ = Describe("StatefulSet", func() {
 			}
 
 		})
+		Context("TeamCity with serviceName", func() {
+			BeforeEach(func() {
+				BeforeEachBuild(func(teamcity *TeamCity) {
+					teamcity.Spec.MainNode.Spec.ServiceName = serviceNameMain
+				})
+			})
+			It("sets rootURL in TEAMCITY_SERVER_OPTS with serviceName", func() {
+				obj, err := DefaultStatefulSetBuilder.BuildObjectList()
+				Expect(err).NotTo(HaveOccurred())
+				stsObject := obj[0]
+				err = DefaultStatefulSetBuilder.Update(stsObject)
+				Expect(err).NotTo(HaveOccurred())
+				statefulSet := stsObject.(*v1.StatefulSet)
+
+				containerEnv := statefulSet.Spec.Template.Spec.Containers[0].Env
+				serverOptsEnvVarIndex := slices.IndexFunc(containerEnv, func(c v12.EnvVar) bool { return c.Name == "TEAMCITY_SERVER_OPTS" })
+				serverOpts := containerEnv[serverOptsEnvVarIndex].Value
+
+				expectedRootURL := fmt.Sprintf("-Dteamcity.server.rootURL=http://$(POD_NAME).%s.$(POD_NAMESPACE).svc", Instance.Spec.MainNode.Spec.ServiceName)
+				Expect(strings.Contains(serverOpts, expectedRootURL)).To(BeTrue())
+			})
+		})
 	})
 
 })
